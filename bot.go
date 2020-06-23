@@ -117,12 +117,11 @@ func main() {
 			fmt.Fprintf(bot.conn, "PONG :tmi.twitch.tv")
 		} else if strings.Contains(line, ".tmi.twitch.tv PRIVMSG "+bot.channel) {
 			messageContents := strings.Split(line, ".tmi.twitch.tv PRIVMSG "+bot.channel)
-			// username := strings.Split(messageContents[0], "@")[1]
+			username := strings.Split(messageContents[0], "@")[1]
 			message := messageContents[1][2:len(messageContents[1])]
-			// fmt.Println(username + ": " + message)
-			if strings.Contains(message, "!oops") {
 
-			}
+			go bot.CommandInterpreter(username, message)
+
 			fmt.Println(line)
 		}
 	}
