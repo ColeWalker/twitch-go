@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 //AccessToken stores a single access token
@@ -37,6 +39,18 @@ func newBot() *Bot {
 		channel: "#supcole",
 		mods:    make(map[string]bool),
 		conn:    nil}
+}
+
+//RequestData for data field of Request
+type RequestData struct {
+	Topics []string `json:"topics"`
+	Auth   string   `json:"auth_token"`
+}
+
+//Request for twitch websocket
+type Request struct {
+	Type string      `json:"type"`
+	Data RequestData `json:"data"`
 }
 
 //Connect bot to IRC server
@@ -109,6 +123,53 @@ func main() {
 	reader := bufio.NewReader(bot.conn)
 	tp := textproto.NewReader(reader)
 
+	socketconn, _, err := websocket.DefaultDialer.Dial("wss://pubsub-edge.twitch.tv", nil)
+	if err != nil {
+		log.Fatal("dial:", err)
+	}
+	defer socketconn.Close()
+
+	done := make(chan struct{})
+
+	data := &RequestData{Topics: []string{"channel-points-channel-v1.23573216"}, Auth: token}
+	requestMessage := &Request{Type: "LISTEN", Data: *data}
+
+	err = socketconn.WriteJSON(requestMessage)
+
+	if err != nil {
+		log.Fatal("issue sending JSON")
+	}
+
+	go func() {
+		defer close(done)
+		for {
+			inc := &IncomingMessage{}
+			err := socketconn.ReadJSON(inc)
+			if err != nil {
+				log.Println("read:", err)
+				return
+			}
+
+			// if err != nil {
+			// 	log.Fatal("error in unmarshal")
+			// 	return
+			// }
+			log.Printf("recv: %+v\n", inc.Data.Message)
+
+			if inc.Data.Topic == "channel-points-channel-v1.23573216" {
+				commerce := &CommerceMsg{}
+				err := json.Unmarshal([]byte(inc.Data.Message), &commerce)
+
+				if err != nil {
+					log.Fatal("error unmarshaling commerce msg")
+					return
+				}
+
+				log.Printf("redemption info: %+v\n", *commerce)
+			}
+		}
+	}()
+
 	for {
 		line, err := tp.ReadLine()
 		if err != nil {
@@ -122,7 +183,6 @@ func main() {
 
 			go bot.CommandInterpreter(username, message)
 
-			fmt.Println(line)
 		}
 	}
 }
