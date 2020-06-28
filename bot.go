@@ -16,43 +16,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-//AccessToken stores a single access token
-type AccessToken struct {
-	Token string `json:"access_token"`
-}
-
-//The Bot object which stores websocket info
-type Bot struct {
-	server  string
-	port    string
-	nick    string
-	channel string
-	mods    map[string]bool
-	conn    net.Conn
-}
-
-func newBot() *Bot {
-	return &Bot{
-		server:  "irc.twitch.tv",
-		port:    "6667",
-		nick:    "supcole",
-		channel: "#supcole",
-		mods:    make(map[string]bool),
-		conn:    nil}
-}
-
-//RequestData for data field of Request
-type RequestData struct {
-	Topics []string `json:"topics"`
-	Auth   string   `json:"auth_token"`
-}
-
-//Request for twitch websocket
-type Request struct {
-	Type string      `json:"type"`
-	Data RequestData `json:"data"`
-}
-
 //Connect bot to IRC server
 func (bot *Bot) Connect(token string) {
 	var err error
@@ -111,6 +74,15 @@ func refreshAuth(refreshToken string, clientID string, secret string) string {
 	return NewToken.Token
 }
 
+//Connect pubsubclient to websocket
+func (client *PubSubClient) Connect() {
+	var err error
+	client.conn, _, err = websocket.DefaultDialer.Dial("wss://pubsub-edge.twitch.tv", nil)
+	if err != nil {
+		log.Fatal("dial:", err)
+	}
+
+}
 func main() {
 	token := refreshAuth(os.Getenv("twitch-bot-refresh-token"), os.Getenv("twitch-bot-client-id"), os.Getenv("twitch-bot-client-secret"))
 	fmt.Println(token)
@@ -123,18 +95,17 @@ func main() {
 	reader := bufio.NewReader(bot.conn)
 	tp := textproto.NewReader(reader)
 
-	socketconn, _, err := websocket.DefaultDialer.Dial("wss://pubsub-edge.twitch.tv", nil)
-	if err != nil {
-		log.Fatal("dial:", err)
-	}
-	defer socketconn.Close()
+	client := newClient(token)
+	client.Connect()
+
+	defer client.conn.Close()
 
 	done := make(chan struct{})
 
 	data := &RequestData{Topics: []string{"channel-points-channel-v1.23573216"}, Auth: token}
 	requestMessage := &Request{Type: "LISTEN", Data: *data}
 
-	err = socketconn.WriteJSON(requestMessage)
+	err := client.conn.WriteJSON(requestMessage)
 
 	if err != nil {
 		log.Fatal("issue sending JSON")
@@ -144,28 +115,24 @@ func main() {
 		defer close(done)
 		for {
 			inc := &IncomingMessage{}
-			err := socketconn.ReadJSON(inc)
+			err := client.conn.ReadJSON(inc)
 			if err != nil {
 				log.Println("read:", err)
 				return
 			}
 
-			// if err != nil {
-			// 	log.Fatal("error in unmarshal")
-			// 	return
-			// }
 			log.Printf("recv: %+v\n", inc.Data.Message)
 
 			if inc.Data.Topic == "channel-points-channel-v1.23573216" {
-				commerce := &CommerceMsg{}
-				err := json.Unmarshal([]byte(inc.Data.Message), &commerce)
+				wrapper := &RedemptionWrapper{}
+				err := json.Unmarshal([]byte(inc.Data.Message), &wrapper)
 
 				if err != nil {
 					log.Fatal("error unmarshaling commerce msg")
 					return
 				}
 
-				log.Printf("redemption info: %+v\n", *commerce)
+				log.Printf("redemption info: %+v\n", wrapper.Data.Redemption)
 			}
 		}
 	}()
