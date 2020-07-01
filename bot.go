@@ -111,6 +111,9 @@ func main() {
 		log.Fatal("issue sending JSON")
 	}
 
+	wheel := newWheel()
+	wheel.Add("hello world/\\\"'+&")
+	fmt.Printf("%+v\n", wheel)
 	go func() {
 		defer close(done)
 		for {
@@ -132,7 +135,10 @@ func main() {
 					return
 				}
 
-				log.Printf("redemption info: %+v\n", wrapper.Data.Redemption)
+				if wrapper.Data.Redemption.Reward.Title == "Add 1 to wheel" {
+					// wheel.Add(wrapper.Data.Redemption.Input)
+					// fmt.Printf("%+v\n", wheel)
+				}
 			}
 		}
 	}()
@@ -148,8 +154,7 @@ func main() {
 			username := strings.Split(messageContents[0], "@")[1]
 			message := messageContents[1][2:len(messageContents[1])]
 
-			go bot.CommandInterpreter(username, message)
-
+			go bot.CommandInterpreter(wheel, username, message)
 		}
 	}
 }
