@@ -13,8 +13,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 //Connect bot to IRC server
@@ -34,7 +32,8 @@ func (bot *Bot) Connect(token string) {
 	fmt.Fprintf(bot.conn, "PASS oauth:%s\r\n", token)
 	fmt.Fprintf(bot.conn, "NICK %s\r\n", bot.nick)
 	fmt.Fprintf(bot.conn, "JOIN %s\r\n", bot.channel)
-	fmt.Fprintf(bot.conn, "/raw CAP REQ :twitch.tv/membership")
+	fmt.Fprintf(bot.conn, "CAP REQ :twitch.tv/membership\r\n")
+	fmt.Fprintf(bot.conn, "CAP REQ :twitch.tv/tags\r\n")
 }
 
 //Message sent to server
@@ -42,6 +41,7 @@ func (bot *Bot) Message(message string) {
 	if message != "" {
 		fmt.Fprintf(bot.conn, "PRIVMSG "+bot.channel+" :"+message+"\r\n")
 	}
+	fmt.Println("PRIVMSG " + bot.channel + " :" + message + "\r\n")
 }
 
 func refreshAuth(refreshToken string, clientID string, secret string) string {
@@ -107,14 +107,7 @@ func CreatePaste(secret string, content string) string {
 }
 
 //Connect pubsubclient to websocket
-func (client *PubSubClient) Connect() {
-	var err error
-	client.conn, _, err = websocket.DefaultDialer.Dial("wss://pubsub-edge.twitch.tv", nil)
-	if err != nil {
-		log.Fatal("dial:", err)
-	}
 
-}
 func main() {
 	token := refreshAuth(os.Getenv("twitch-bot-refresh-token"), os.Getenv("twitch-bot-client-id"), os.Getenv("twitch-bot-client-secret"))
 	fmt.Println(token)
@@ -132,64 +125,40 @@ func main() {
 
 	defer client.conn.Close()
 
-	done := make(chan struct{})
-
 	data := &RequestData{Topics: []string{"channel-points-channel-v1.23573216"}, Auth: token}
 	requestMessage := &Request{Type: "LISTEN", Data: *data}
 
+	client.writeLock.Lock()
 	err := client.conn.WriteJSON(requestMessage)
+	client.writeLock.Unlock()
 
 	if err != nil {
 		log.Fatal("issue sending JSON")
 	}
+	wheel := newWheel()
+
+	client.Wheel = wheel
 
 	go client.PingLoop()
-	wheel := newWheel()
-	wheel.Add("hello world/\\\"'+&")
-	fmt.Printf("%+v\n", wheel)
-	go func() {
-		defer close(done)
-		for {
-			inc := &IncomingMessage{}
-			err := client.conn.ReadJSON(inc)
-			if err != nil {
-				log.Println("read:", err)
-				return
-			}
-
-			log.Printf("recv: %+v\n", inc.Data.Message)
-
-			if inc.Data.Topic == "channel-points-channel-v1.23573216" {
-				wrapper := &RedemptionWrapper{}
-				err := json.Unmarshal([]byte(inc.Data.Message), &wrapper)
-
-				if err != nil {
-					log.Fatal("error unmarshaling commerce msg")
-					return
-				}
-
-				//TODO -> regular expression this or strings.prefix + strings.suffix ?
-				if wrapper.Data.Redemption.Reward.Title == "Add 1 to wheel" {
-					// wheel.Add(wrapper.Data.Redemption.Input)
-					// fmt.Printf("%+v\n", wheel)
-				}
-			}
-		}
-	}()
+	go client.ReadLoop()
 
 	for {
 		line, err := tp.ReadLine()
-		log.Println(line)
+
 		if err != nil {
 			break
 		} else if strings.Contains(line, "PING") {
 			fmt.Fprintf(bot.conn, "PONG :tmi.twitch.tv")
 		} else if strings.Contains(line, ".tmi.twitch.tv PRIVMSG "+bot.channel) {
 			messageContents := strings.Split(line, ".tmi.twitch.tv PRIVMSG "+bot.channel)
-			username := strings.Split(messageContents[0], "@")[1]
+			rawValues := strings.SplitN(messageContents[0], ":", 2)
+			isMod := strings.Contains(messageContents[0], "mod=1")
+
+			username := strings.Split(rawValues[1], "@")[1]
 			message := messageContents[1][2:len(messageContents[1])]
-			owner := strings.ToLower(username) == strings.TrimPrefix(bot.channel, "#")
-			go bot.CommandInterpreter(wheel, username, message, owner)
+			moderator := isMod || (strings.ToLower(username) == strings.TrimPrefix(bot.channel, "#"))
+			log.Printf("mod:%t %s: %s\n", moderator, username, message)
+			go bot.CommandInterpreter(wheel, username, message, moderator)
 		}
 	}
 }
