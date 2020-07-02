@@ -2,9 +2,6 @@ package main
 
 import (
 	"net"
-	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 //AccessToken stores a single access token
@@ -42,21 +39,4 @@ type RequestData struct {
 type Request struct {
 	Type string      `json:"type"`
 	Data RequestData `json:"data"`
-}
-
-//PubSubClient is a twitch pubsub bot with all necessary functions
-type PubSubClient struct {
-	conn     *websocket.Conn
-	Token    string
-	LastPing int64
-	LastPong int64
-	Topics   []string
-}
-
-func newClient(auth string) *PubSubClient {
-	return &PubSubClient{
-		Token:    auth,
-		Topics:   []string{},
-		LastPing: time.Now().Unix(),
-		LastPong: time.Now().Unix()}
 }

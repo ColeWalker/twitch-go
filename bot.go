@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -33,6 +34,7 @@ func (bot *Bot) Connect(token string) {
 	fmt.Fprintf(bot.conn, "PASS oauth:%s\r\n", token)
 	fmt.Fprintf(bot.conn, "NICK %s\r\n", bot.nick)
 	fmt.Fprintf(bot.conn, "JOIN %s\r\n", bot.channel)
+	fmt.Fprintf(bot.conn, "/raw CAP REQ :twitch.tv/membership")
 }
 
 //Message sent to server
@@ -43,7 +45,6 @@ func (bot *Bot) Message(message string) {
 }
 
 func refreshAuth(refreshToken string, clientID string, secret string) string {
-
 	url := fmt.Sprintf("https://id.twitch.tv/oauth2/token?grant_type=refresh_token&refresh_token=%s&client_id=%s&client_secret=%s", refreshToken, clientID, secret)
 	resp, err := http.Post(url, "application/json", nil)
 
@@ -72,6 +73,37 @@ func refreshAuth(refreshToken string, clientID string, secret string) string {
 		log.Fatalln(string(body))
 	}
 	return NewToken.Token
+}
+
+func CreatePaste(secret string, content string) string {
+	hc := http.Client{}
+
+	form := url.Values{}
+	form.Add("api_dev_key", secret)
+	form.Add("api_option", "paste")
+	form.Add("api_paste_code", content)
+	req, err := http.NewRequest("POST", "https://pastebin.com/api/api_post.php", strings.NewReader(form.Encode()))
+	if err != nil {
+		log.Panic("error making newrequest")
+	}
+	req.Header.Add("content-type", "application/x-www-form-urlencoded;charset=utf-8")
+
+	resp, err := hc.Do(req)
+
+	if err != nil {
+		fmt.Println("error contacting pastebin service")
+	}
+
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+
+	if err != nil {
+		log.Println("Error in ReadAll")
+		log.Fatalln(err)
+	}
+
+	return string(body)
 }
 
 //Connect pubsubclient to websocket
@@ -111,6 +143,7 @@ func main() {
 		log.Fatal("issue sending JSON")
 	}
 
+	go client.PingLoop()
 	wheel := newWheel()
 	wheel.Add("hello world/\\\"'+&")
 	fmt.Printf("%+v\n", wheel)
@@ -135,6 +168,7 @@ func main() {
 					return
 				}
 
+				//TODO -> regular expression this or strings.prefix + strings.suffix ?
 				if wrapper.Data.Redemption.Reward.Title == "Add 1 to wheel" {
 					// wheel.Add(wrapper.Data.Redemption.Input)
 					// fmt.Printf("%+v\n", wheel)
@@ -145,6 +179,7 @@ func main() {
 
 	for {
 		line, err := tp.ReadLine()
+		log.Println(line)
 		if err != nil {
 			break
 		} else if strings.Contains(line, "PING") {
@@ -153,8 +188,8 @@ func main() {
 			messageContents := strings.Split(line, ".tmi.twitch.tv PRIVMSG "+bot.channel)
 			username := strings.Split(messageContents[0], "@")[1]
 			message := messageContents[1][2:len(messageContents[1])]
-
-			go bot.CommandInterpreter(wheel, username, message)
+			owner := strings.ToLower(username) == strings.TrimPrefix(bot.channel, "#")
+			go bot.CommandInterpreter(wheel, username, message, owner)
 		}
 	}
 }

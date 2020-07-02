@@ -31,3 +31,13 @@ type RedemptionData struct {
 	}
 	Input string `json:"user_input"`
 }
+
+//OutgoingMessage is the message that is sent to the server
+type OutgoingMessage struct {
+	Type  string `json:"type,omitempty"`
+	Nonce string `json:"nonce,omitempty"`
+	Data  struct {
+		Topics    []string `json:"topics,omitempty"`
+		AuthToken string   `json:"auth_token,omitempty"`
+	} `json:"data,omitempty"`
+}
