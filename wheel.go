@@ -55,7 +55,7 @@ func (wheel *Wheel) Add(game string) {
 	newURL := wheel.URL
 	spaces := regexp.MustCompile(`\s`)
 
-	illegalChars := regexp.MustCompile(`(\?|\&|\/|\\|\.|\'|\"|\:|\;)`)
+	illegalChars := regexp.MustCompile(`(\?|\&|\/|\\|\.|\'|\"|\:|\;|[\x{1F600}-\x{1F6FF}|[\x{2600}-\x{26FF}])|\%`)
 	parsedGame := spaces.ReplaceAllLiteralString(game, "+")
 	parsedGame = illegalChars.ReplaceAllLiteralString(parsedGame, "")
 
@@ -124,11 +124,12 @@ func (wheel *Wheel) Reset() {
 //GetURL from Wheel
 func (wheel *Wheel) GetURL() string {
 	returnString := wheel.URL + "&time=30"
-
+	fmt.Println("Wheel URL: " + wheel.URL)
 	if len(returnString) > 400 {
 		returnString = CreatePaste(os.Getenv("pastebin-secret"), returnString)
 	}
 	wheel.Reset()
+	fmt.Println("Returned URL:" + returnString)
 	return returnString
 }
 
