@@ -2,53 +2,35 @@ package main
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
 //CommandInterpreter receives username and message and interprets commands
-func (bot *Bot) CommandInterpreter(wheel *Wheel, username string, message string, moderator bool) {
-	username = strings.ToLower(username)
+func (bot *Bot) CommandInterpreter(username string, message string, moderator bool) {
+	lowerUsername := strings.ToLower(username)
 	lowerMessage := strings.ToLower(message)
 
-	if strings.HasPrefix(lowerMessage, "!add1 ") {
-		game := strings.TrimPrefix(message, "!add1 ")
+	addCommand := regexp.MustCompile(`\!add[1-3] .*`)
 
-		success := wheel.ChatAdd(username, game, 1)
-		if success {
-			bot.Message("Add successful")
+	if addCommand.MatchString(message) {
+		numRaw := strings.TrimPrefix(message, "!add")[0]
+		num, _ := strconv.Atoi(string(numRaw))
+
+		game := strings.SplitN(message, " ", 2)[1]
+
+		err := bot.Wheel.ChatAdd(lowerUsername, game, num)
+		if err != nil {
+			bot.Message("Add unsuccessful: " + err.Error())
 		} else {
-			bot.Message("Add unsuccessful")
-		}
-
-		fmt.Printf("%+v\n", wheel)
-	} else if strings.HasPrefix(lowerMessage, "!add2 ") {
-		game := strings.TrimPrefix(message, "!add2 ")
-
-		success := wheel.ChatAdd(username, game, 2)
-		if success {
 			bot.Message("Add successful")
-		} else {
-			bot.Message("Add unsuccessful")
 		}
-		fmt.Printf("%+v\n", wheel)
-	} else if strings.HasPrefix(lowerMessage, "!add3 ") {
-		game := strings.TrimPrefix(message, "!add3 ")
-
-		success := wheel.ChatAdd(username, game, 3)
-
-		if success {
-			bot.Message("Add successful")
-		} else {
-			bot.Message("Add unsuccessful")
-		}
-
-		fmt.Printf("%+v\n", wheel)
 	} else if strings.HasPrefix(lowerMessage, "!geturl") && moderator {
-		reply := wheel.GetURL()
+		reply := bot.Wheel.GetURL()
 		fmt.Println(reply)
 		go bot.Message(reply)
 		fmt.Println("get url called")
 	}
-	//TODO -> !geturl command for mods only
 
 }

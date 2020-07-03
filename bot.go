@@ -2,21 +2,56 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net"
-	"net/http"
 	"net/textproto"
-	"net/url"
-	"os"
 	"strings"
 	"time"
 )
 
-//Connect bot to IRC server
-func (bot *Bot) Connect(token string) {
+//The Bot object which stores irc info
+type Bot struct {
+	//server to connect to
+	server string
+	//port to connect to
+	port string
+	//nickname of bot
+	nick string
+	//channel to join - #username format
+	channel string
+	//mods of channel -> currently unused
+	mods map[string]bool
+	//connection to irc
+	conn net.Conn
+	//Wheel to modify with commands
+	Wheel *Wheel
+	//oauth token containing chat:read and chat:write scopes
+	AuthToken string
+}
+
+//constructor
+func newBot(token string) *Bot {
+	return &Bot{
+		server:    "irc.twitch.tv",
+		port:      "6667",
+		nick:      "supcole",
+		channel:   "#supcole",
+		mods:      make(map[string]bool),
+		conn:      nil,
+		AuthToken: token}
+}
+
+//Connect and connect bot to IRC server
+func (bot *Bot) Connect() {
+	//close connection if it exists
+	if bot.conn != nil {
+		err := bot.conn.Close()
+		if err != nil {
+			fmt.Println("error closing old connection")
+		}
+	}
+
 	var err error
 	fmt.Println("Attempting to connect to Twitch IRC server!")
 	bot.conn, err = net.Dial("tcp", bot.server+":"+bot.port)
@@ -24,19 +59,22 @@ func (bot *Bot) Connect(token string) {
 	if err != nil {
 		fmt.Printf("Unable to connect to Twitch IRC server! Reconnecting in 10 seconds...\n")
 		time.Sleep(10 * time.Second)
-		bot.Connect(token)
+		bot.Connect()
 	}
+
 	fmt.Printf("Connected to IRC server %s\n", bot.server)
 
 	fmt.Fprintf(bot.conn, "USER %s 8 * :%s\r\n", bot.nick, bot.nick)
-	fmt.Fprintf(bot.conn, "PASS oauth:%s\r\n", token)
+	fmt.Fprintf(bot.conn, "PASS oauth:%s\r\n", bot.AuthToken)
 	fmt.Fprintf(bot.conn, "NICK %s\r\n", bot.nick)
 	fmt.Fprintf(bot.conn, "JOIN %s\r\n", bot.channel)
 	fmt.Fprintf(bot.conn, "CAP REQ :twitch.tv/membership\r\n")
 	fmt.Fprintf(bot.conn, "CAP REQ :twitch.tv/tags\r\n")
+
+	go bot.ReadLoop()
 }
 
-//Message sent to server
+//Message to IRC channel
 func (bot *Bot) Message(message string) {
 	if message != "" {
 		fmt.Fprintf(bot.conn, "PRIVMSG "+bot.channel+" :"+message+"\r\n")
@@ -44,121 +82,41 @@ func (bot *Bot) Message(message string) {
 	fmt.Println("PRIVMSG " + bot.channel + " :" + message + "\r\n")
 }
 
-func refreshAuth(refreshToken string, clientID string, secret string) string {
-	url := fmt.Sprintf("https://id.twitch.tv/oauth2/token?grant_type=refresh_token&refresh_token=%s&client_id=%s&client_secret=%s", refreshToken, clientID, secret)
-	resp, err := http.Post(url, "application/json", nil)
-
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-
-	if err != nil {
-		log.Println("Error in ReadAll")
-		log.Fatalln(err)
-	}
-
-	var NewToken AccessToken
-	err = json.Unmarshal(body, &NewToken)
-
-	if err != nil {
-		log.Println("Error in Unmarshal")
-		log.Fatalln(err)
-	}
-
-	if NewToken.Token == "" {
-		log.Fatalln(string(body))
-	}
-	return NewToken.Token
-}
-
-func CreatePaste(secret string, content string) string {
-	hc := http.Client{}
-
-	form := url.Values{}
-	form.Add("api_dev_key", secret)
-	form.Add("api_option", "paste")
-	form.Add("api_paste_code", content)
-	req, err := http.NewRequest("POST", "https://pastebin.com/api/api_post.php", strings.NewReader(form.Encode()))
-	if err != nil {
-		log.Panic("error making newrequest")
-	}
-	req.Header.Add("content-type", "application/x-www-form-urlencoded;charset=utf-8")
-
-	resp, err := hc.Do(req)
-
-	if err != nil {
-		fmt.Println("error contacting pastebin service")
-	}
-
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-
-	if err != nil {
-		log.Println("Error in ReadAll")
-		log.Fatalln(err)
-	}
-
-	return string(body)
-}
-
-//Connect pubsubclient to websocket
-
-func main() {
-	token := refreshAuth(os.Getenv("twitch-bot-refresh-token"), os.Getenv("twitch-bot-client-id"), os.Getenv("twitch-bot-client-secret"))
-	fmt.Println(token)
-
-	bot := newBot()
-	bot.Connect(token)
-
-	defer bot.conn.Close()
-
+//ReadLoop for Bot
+func (bot *Bot) ReadLoop() {
 	reader := bufio.NewReader(bot.conn)
 	tp := textproto.NewReader(reader)
-
-	client := newClient(token)
-	client.Connect()
-
-	defer client.conn.Close()
-
-	data := &RequestData{Topics: []string{"channel-points-channel-v1.23573216"}, Auth: token}
-	requestMessage := &Request{Type: "LISTEN", Data: *data}
-
-	client.writeLock.Lock()
-	err := client.conn.WriteJSON(requestMessage)
-	client.writeLock.Unlock()
-
-	if err != nil {
-		log.Fatal("issue sending JSON")
-	}
-	wheel := newWheel()
-
-	client.Wheel = wheel
-
-	go client.PingLoop()
-	go client.ReadLoop()
 
 	for {
 		line, err := tp.ReadLine()
 
 		if err != nil {
+			fmt.Println("Bot read loop exited due to error")
+			bot.Connect()
 			break
 		} else if strings.Contains(line, "PING") {
 			fmt.Fprintf(bot.conn, "PONG :tmi.twitch.tv")
 		} else if strings.Contains(line, ".tmi.twitch.tv PRIVMSG "+bot.channel) {
+			//TODO -> clean this up with regex
 			messageContents := strings.Split(line, ".tmi.twitch.tv PRIVMSG "+bot.channel)
+
+			//TODO -> parse this into struct with info
+
+			//rawValues[0] = IRC3 tags
+			//rawValues[1] = raw message
 			rawValues := strings.SplitN(messageContents[0], ":", 2)
 			isMod := strings.Contains(messageContents[0], "mod=1")
 
 			username := strings.Split(rawValues[1], "@")[1]
 			message := messageContents[1][2:len(messageContents[1])]
 			moderator := isMod || (strings.ToLower(username) == strings.TrimPrefix(bot.channel, "#"))
+
+			//print basic message to console
 			log.Printf("mod:%t %s: %s\n", moderator, username, message)
-			go bot.CommandInterpreter(wheel, username, message, moderator)
+
+			//send message to command interpreter
+			go bot.CommandInterpreter(username, message, moderator)
 		}
 	}
+
 }

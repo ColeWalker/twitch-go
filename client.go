@@ -15,15 +15,24 @@ import (
 
 //PubSubClient is a twitch pubsub bot with all necessary functions
 type PubSubClient struct {
-	conn      *websocket.Conn
-	Token     string
-	LastPing  time.Time
-	LastPong  time.Time
-	Topics    []string
+	//Websocket connection
+	conn *websocket.Conn
+	//oauth token from twitch
+	Token string
+	//Channel id to listen for events
+	ChannelID int
+	//used to tell when we need to issue pings or reconnect to twitch server
+	LastPing time.Time
+	LastPong time.Time
+	//Topics to listen to, currently unused
+	Topics []string
+	//Gorilla doesn't support concurrent writes
 	writeLock *sync.Mutex
-	Wheel     *Wheel
+	//Wheel object to be modified
+	Wheel *Wheel
 }
 
+//constructor
 func newClient(auth string) *PubSubClient {
 	return &PubSubClient{
 		Token:     auth,
@@ -33,30 +42,27 @@ func newClient(auth string) *PubSubClient {
 		writeLock: &sync.Mutex{}}
 }
 
-//PingLoop constantly pings twitch
+//PingLoop constantly pings twitch, issues reconnect if last pong was too long ago
 func (client *PubSubClient) PingLoop() {
 	for {
 		if time.Now().Unix()%60 == 0 {
 			client.ping()
 		}
 
-		// if time.Now().Unix()%10 == 0 {
-
 		if client.LastPong.Sub(client.LastPing).Seconds() > (20 * time.Second).Seconds() {
-			client.reconnect()
-			fmt.Println(client.LastPong.Sub(client.LastPing).Seconds)
-			fmt.Println(20 * time.Second)
+			client.Connect()
 			return
 		}
-		// }
 
 		time.Sleep(time.Second * 1)
 	}
 }
 
+//ping twitch server
 func (client *PubSubClient) ping() {
 	client.writeLock.Lock()
 	defer client.writeLock.Unlock()
+
 	err := client.conn.WriteJSON(&OutgoingMessage{
 		Type: "PING",
 	})
@@ -68,16 +74,9 @@ func (client *PubSubClient) ping() {
 	client.LastPing = time.Now()
 }
 
+//Connect to twitch server
 func (client *PubSubClient) Connect() {
-	var err error
-	client.conn, _, err = websocket.DefaultDialer.Dial("wss://pubsub-edge.twitch.tv", nil)
-	if err != nil {
-		log.Fatal("dial:", err)
-	}
-
-}
-
-func (client *PubSubClient) reconnect() {
+	//if client connection exists, close it
 	if client.conn != nil {
 		err := client.conn.Close()
 		if err != nil {
@@ -87,7 +86,7 @@ func (client *PubSubClient) reconnect() {
 
 	conn, _, err := websocket.DefaultDialer.Dial("wss://pubsub-edge.twitch.tv", nil)
 	client.conn = conn
-	fmt.Println("reconnecting...")
+	fmt.Println("Connecting to PubSub server")
 	if err != nil {
 		return
 	}
@@ -100,7 +99,8 @@ func (client *PubSubClient) reconnect() {
 	go client.PingLoop()
 	client.ping()
 
-	//sub to topics
+	//sub to topic
+	//TODO -> set topic in slice, and use enumerated types to represent this junk, auto append channel id
 	data := &RequestData{Topics: []string{"channel-points-channel-v1.23573216"}, Auth: client.Token}
 	requestMessage := &Request{Type: "LISTEN", Data: *data}
 
@@ -122,13 +122,14 @@ func (client *PubSubClient) ReadLoop() {
 
 		if err != nil {
 			log.Println("closed read loop due to error")
-			client.reconnect()
+			go client.Connect()
 			return
 		}
 
-		log.Printf("recv: %+v", inc)
-
-		if inc.Data.Topic == "channel-points-channel-v1.23573216" {
+		if inc.Type == "PONG" {
+			client.LastPong = time.Now()
+		} else if inc.Data.Topic == "channel-points-channel-v1.23573216" {
+			//enum would be nice here
 			wrapper := &RedemptionWrapper{}
 			err := json.Unmarshal([]byte(inc.Data.Message), &wrapper)
 
@@ -137,8 +138,9 @@ func (client *PubSubClient) ReadLoop() {
 				return
 			}
 
-			//TODO -> regular expression this or strings.prefix + strings.suffix ?
 			lowerTitle := strings.ToLower(wrapper.Data.Redemption.Reward.Title)
+
+			//add x to wheel
 			addRewardRegex := regexp.MustCompile(`add (\d*[1-9]+) to wheel`)
 
 			if addRewardRegex.MatchString(lowerTitle) {
@@ -153,8 +155,6 @@ func (client *PubSubClient) ReadLoop() {
 				game := wrapper.Data.Redemption.Input
 				client.Wheel.AddMultiple(game, num)
 			}
-		} else if inc.Type == "PONG" {
-			client.LastPong = time.Now()
 		}
 	}
 }

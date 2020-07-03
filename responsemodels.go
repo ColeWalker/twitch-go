@@ -1,5 +1,17 @@
 package main
 
+//RequestData for data field of Request for websocket
+type RequestData struct {
+	Topics []string `json:"topics"`
+	Auth   string   `json:"auth_token"`
+}
+
+//Request for twitch websocket
+type Request struct {
+	Type string      `json:"type"`
+	Data RequestData `json:"data"`
+}
+
 //IncomingMessage from websocket client
 type IncomingMessage struct {
 	Type string `json:"type"`
